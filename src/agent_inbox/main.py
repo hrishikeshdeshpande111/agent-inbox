@@ -100,21 +100,27 @@ _public_send_limiter = RateLimiter(10)
 
 # Native MCP surface (Streamable HTTP at /mcp) so MCP-capable clients —
 # ChatGPT plugins, Claude, agent frameworks — get first-class tools instead
-# of hand-rolled HTTP. The tools live in mcp_tools.py; the mount is the only
-# coupling point, and the module never imports main (no cycle).
+# of hand-rolled HTTP. The tools live in mcp_tools.py; the route splice is
+# the only coupling point, and the module never imports main (no cycle).
 # stateless_http=True: each request is independent (no session affinity),
-# which also avoids the session manager's lifespan requirement when mounted.
+# which also avoids the session manager's lifespan requirement.
+#
+# The SDK's routes are spliced into the main router instead of app.mount():
+# a Mount only matches "/mcp/..." and Starlette 307-redirects the exact
+# "/mcp" path (which also downgraded https->http behind the proxy — the
+# Dockerfile now passes --proxy-headers to uvicorn so forwarded proto is
+# trusted). Some MCP clients won't follow that redirect, so the exact path
+# is served directly with no redirect involved.
 from . import mcp_tools as _mcp_tools  # noqa: E402
 from .mcp_tools import mcp as _mcp_server  # noqa: E402
 
-app.mount(
-    "/mcp",
-    _mcp_server.streamable_http_app(
-        streamable_http_path="/",
-        stateless_http=True,
-        transport_security=_mcp_tools.transport_security(),
-    ),
+_mcp_subapp = _mcp_server.streamable_http_app(
+    streamable_http_path="/mcp",
+    stateless_http=True,
+    transport_security=_mcp_tools.transport_security(),
 )
+for _mcp_route in _mcp_subapp.routes:
+    app.router.routes.append(_mcp_route)
 
 
 @app.middleware("http")
