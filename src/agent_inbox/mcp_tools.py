@@ -10,7 +10,11 @@ never main) so the tool functions stay importable for tests.
 Authentication: every tool except create_inbox takes the inbox's
 read_secret or write_secret as an explicit parameter — the MCP client
 holds the credentials it received at creation time, exactly like the
-REST API's header auth.
+REST API's header auth. Additionally, the scoped conversation token from
+an inbox's invite link (llm.txt URL) is accepted wherever a read or
+write credential is needed: it grants send + read on that inbox only
+(never acknowledge, rotate, or delete). This makes one invite link the
+complete onboarding credential for the other agent.
 """
 
 import asyncio
@@ -73,6 +77,29 @@ def _check_read_secret(provided: str, inbox: dict) -> None:
         raise InboxError("invalid read secret")
 
 
+def _check_conversation_token(provided: str, inbox: dict) -> bool:
+    tok_hash = inbox.get("conversation_token_hash") or ""
+    return bool(tok_hash) and secrets_match(provided, tok_hash)
+
+
+def _check_send_credential(provided: str, inbox: dict) -> None:
+    """Accept the write secret or the invite-link conversation token."""
+    if secrets_match(provided, inbox["write_secret_hash"]):
+        return
+    if _check_conversation_token(provided, inbox):
+        return
+    raise InboxError("invalid write secret")
+
+
+def _check_read_credential(provided: str, inbox: dict) -> None:
+    """Accept the read secret or the invite-link conversation token."""
+    if secrets_match(provided, inbox["read_secret_hash"]):
+        return
+    if _check_conversation_token(provided, inbox):
+        return
+    raise InboxError("invalid read secret")
+
+
 async def _wait_for_replies(
     inbox_id: str, after_message_id: str, wait_seconds: int
 ) -> list[dict]:
@@ -115,14 +142,16 @@ async def send_message(
     inbox_id: str, write_secret: str, body: str, wait_seconds: int = 0
 ) -> dict:
     """Deliver a message to an agent's inbox. The agent on the other side
-    reads it with check_messages. Set wait_seconds (max 50) to hold the call
-    open for a reply — useful for a single "ask and get the answer" turn:
+    reads it with check_messages. The write_secret may be the inbox's
+    write secret or the conversation token from its invite link. Set
+    wait_seconds (max 50) to hold the call open for a reply — useful for
+    a single "ask and get the answer" turn:
     a reply arrives as {"status": "replied", "replies": [...]}, otherwise
     {"status": "timeout"} and you can check_messages later with after_id
     set to the returned message_id."""
     _check_rate(f"send:{inbox_id}")
     inbox = await _require_inbox(inbox_id)
-    _check_write_secret(write_secret, inbox)
+    _check_send_credential(write_secret, inbox)
     if len(body.encode("utf-8")) > settings.max_body_bytes:
         raise InboxError(f"message too large (max {settings.max_body_bytes} bytes)")
     row = await db.insert_message(
@@ -160,13 +189,14 @@ async def check_messages(
     after_id: str | None = None,
     limit: int = 50,
 ) -> dict:
-    """Read messages from an inbox. Pass after_id (a message id you have
-    already seen) to get only newer messages, oldest-first — the polling
-    primitive for following a conversation. Omit after_id for the newest
-    messages."""
+    """Read messages from an inbox. The read_secret may be the inbox's
+    read secret or the conversation token from its invite link.
+    Pass after_id (a message id you have already seen) to get only newer
+    messages, oldest-first — the polling primitive for following a
+    conversation. Omit after_id for the newest messages."""
     _check_rate(f"check:{inbox_id}")
     inbox = await _require_inbox(inbox_id)
-    _check_read_secret(read_secret, inbox)
+    _check_read_credential(read_secret, inbox)
     limit = max(1, min(limit, 200))
     messages, _ = await db.list_messages(inbox_id, limit, None, after_id)
     return {
@@ -203,7 +233,7 @@ async def get_inbox(inbox_id: str, read_secret: str) -> dict:
     many unacknowledged messages it holds."""
     _check_rate(f"info:{inbox_id}")
     inbox = await _require_inbox(inbox_id)
-    _check_read_secret(read_secret, inbox)
+    _check_read_credential(read_secret, inbox)
     stats = await db.inbox_stats(inbox_id)
     return {
         "id": inbox["id"],

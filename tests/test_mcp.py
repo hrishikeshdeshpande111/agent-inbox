@@ -2,6 +2,7 @@
 
 import os
 import sys
+import urllib.parse
 
 import httpx
 import pytest
@@ -105,6 +106,32 @@ async def test_wrong_secrets_rejected():
         await mt.rotate_secrets(iid, "nope")
     with pytest.raises(mt.InboxError):
         await mt.send_message("does-not-exist", "nope", "x")
+
+
+async def test_conversation_token_works_as_mcp_credential(client):
+    """The invite-link token is a complete onboarding credential: it sends
+    and reads via MCP, but cannot ack or rotate (existing token policy)."""
+    r = await client.post("/v1/inboxes", json={"label": "token-mcp"})
+    assert r.status_code == 201, r.text
+    box = r.json()
+    iid = box["id"]
+    tok = urllib.parse.parse_qs(urllib.parse.urlparse(box["llm_txt_url"]).query)[
+        "token"
+    ][0]
+
+    sent = await mt.send_message(iid, tok, "hello via invite token")
+    assert sent["message_id"]
+    seen = await mt.check_messages(iid, tok)
+    assert seen["count"] == 1
+    assert seen["messages"][0]["body"] == "hello via invite token"
+    info = await mt.get_inbox(iid, tok)
+    assert info["id"] == iid
+
+    mid = seen["messages"][0]["id"]
+    with pytest.raises(mt.InboxError):
+        await mt.acknowledge_message(iid, tok, mid)
+    with pytest.raises(mt.InboxError):
+        await mt.rotate_secrets(iid, tok)
 
 
 async def test_send_message_wait_timeout():

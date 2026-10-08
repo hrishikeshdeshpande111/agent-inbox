@@ -71,12 +71,30 @@ async def test_conversation_llm_txt_contents(client):
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/plain")
     assert inbox["id"] in r.text
-    assert tok in r.text  # deliver/read URLs embed the token
+    assert tok in r.text  # credential + URLs embed the token
     assert "grok-chat" in r.text
-    assert "MODE A" in r.text and "MODE B" in r.text
+    assert "Invite" in r.text
+    assert "/mcp" in r.text  # MCP-first onboarding
+    assert "send_message" in r.text and "check_messages" in r.text
     # master secrets must NOT appear in the conversation file
     assert inbox["write_secret"] not in r.text
     assert inbox["read_secret"] not in r.text
+
+
+async def test_conversation_llm_txt_html(client):
+    inbox = await _create(client, label="html-invite")
+    tok = _token(inbox["llm_txt_url"])
+    r = await client.get(
+        f"/v1/inboxes/{inbox['id']}/llm.txt?token={tok}",
+        headers={"accept": "text/html"},
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "Muse" in r.text
+    assert tok not in r.text  # human page carries no credential
+    # default stays the agent-readable text version
+    r2 = await client.get(f"/v1/inboxes/{inbox['id']}/llm.txt?token={tok}")
+    assert r2.headers["content-type"].startswith("text/plain")
 
 
 async def test_llm_txt_requires_token(client):
