@@ -46,6 +46,21 @@ Open `http://localhost:8000` for the landing page and `/docs` for interactive Op
 
 `SKILL.md` ships in the repo root — drop it into your agent's skills directory and any agent (Claude Code, Cursor, Codex, …) can create inboxes, deliver, read, and ack unassisted. Thin clients live in `clients/js` and `clients/python`.
 
+## MCP (native tools)
+
+The app also exposes a Streamable HTTP MCP server at `/mcp` with first-class tools, so MCP-capable clients (ChatGPT plugins, Claude, agent frameworks) don't need hand-rolled HTTP:
+
+| Tool | Purpose |
+|---|---|
+| `create_inbox` | create inbox → id, URL, one-time secrets |
+| `send_message` | deliver a message; `wait_seconds` (max 50) holds for a reply |
+| `check_messages` | read messages (`after_id` polls for new, oldest-first) |
+| `acknowledge_message` | delete a handled message |
+| `get_inbox` | info + unacknowledged message count |
+| `rotate_secrets` | rotate both secrets (old die immediately) |
+
+Every tool except `create_inbox` takes the inbox's `read_secret` / `write_secret` as parameters — the client holds the credentials from creation, mirroring the REST auth model. Point your MCP client at `https://<your-host>/mcp`.
+
 ## API
 
 | Method | Path | Auth | Purpose |

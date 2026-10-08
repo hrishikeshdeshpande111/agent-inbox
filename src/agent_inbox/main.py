@@ -70,7 +70,13 @@ async def lifespan(app: FastAPI):
     await db.init()
     log.info("agent-inbox v%s starting (db=%s)", __version__, settings.db_path)
     task = asyncio.create_task(cleanup.loop())
-    yield
+    # The MCP session manager (v2 SDK) needs its run() context entered for
+    # the mounted /mcp sub-app to serve requests; without it, requests fail
+    # with "Task group is not initialized".
+    from .mcp_tools import mcp as _mcp_lifespan_server
+
+    async with _mcp_lifespan_server.session_manager.run():
+        yield
     task.cancel()
     try:
         await task
@@ -91,6 +97,24 @@ _inbox_limiter = RateLimiter(settings.rate_limit_per_min)
 # Public send page: deliberately open (capability URL), so it gets its own
 # tight per-IP budget on top of the per-inbox limiter.
 _public_send_limiter = RateLimiter(10)
+
+# Native MCP surface (Streamable HTTP at /mcp) so MCP-capable clients —
+# ChatGPT plugins, Claude, agent frameworks — get first-class tools instead
+# of hand-rolled HTTP. The tools live in mcp_tools.py; the mount is the only
+# coupling point, and the module never imports main (no cycle).
+# stateless_http=True: each request is independent (no session affinity),
+# which also avoids the session manager's lifespan requirement when mounted.
+from . import mcp_tools as _mcp_tools  # noqa: E402
+from .mcp_tools import mcp as _mcp_server  # noqa: E402
+
+app.mount(
+    "/mcp",
+    _mcp_server.streamable_http_app(
+        streamable_http_path="/",
+        stateless_http=True,
+        transport_security=_mcp_tools.transport_security(),
+    ),
+)
 
 
 @app.middleware("http")
