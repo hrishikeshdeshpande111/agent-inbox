@@ -1,0 +1,17 @@
+services:
+  agent-inbox:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # IMPORTANT: set this to your real public URL in production —
+      # it is baked into the inbox URLs handed to users.
+      AGENT_INBOX_BASE_URL: ${AGENT_INBOX_BASE_URL:-http://localhost:8000}
+      AGENT_INBOX_RETENTION_DAYS: ${AGENT_INBOX_RETENTION_DAYS:-7}
+      AGENT_INBOX_RATE_LIMIT_PER_MIN: ${AGENT_INBOX_RATE_LIMIT_PER_MIN:-60}
+    volumes:
+      - agent-inbox-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  agent-inbox-data:

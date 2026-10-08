@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Inbox — A mailbox for your AI agent</title>
+<meta name="description" content="Agent Inbox gives any AI agent a URL. One API call provisions a mailbox; anything that can POST a webhook can deliver to it; your agent reads the mail back via API.">
+<style>
+  :root{
+    --bg:#08090d;
+    --bg-soft:#0d0f15;
+    --panel:#10131b;
+    --panel-2:#141824;
+    --line:rgba(255,255,255,.08);
+    --line-soft:rgba(255,255,255,.05);
+    --text:#eceef4;
+    --muted:#9aa1b2;
+    --faint:#6b7280;
+    --amber:#f0a832;
+    --amber-soft:rgba(240,168,50,.12);
+    --red:#e5484d;
+    --green:#3fb950;
+    --blue:#6b9dff;
+    --radius:14px;
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  ::selection{background:rgba(240,168,50,.28)}
+  a{color:inherit}
+
+  /* ---------- backdrop ---------- */
+  .glow{
+    position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:
+      radial-gradient(640px 380px at 18% -4%, rgba(240,168,50,.07), transparent 60%),
+      radial-gradient(720px 420px at 85% 8%, rgba(107,157,255,.06), transparent 60%);
+  }
+  .dots{
+    position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+    background-image:radial-gradient(rgba(255,255,255,.055) 1px, transparent 1px);
+    background-size:26px 26px;
+    mask-image:radial-gradient(ellipse 90% 60% at 50% 0%, black 30%, transparent 75%);
+    -webkit-mask-image:radial-gradient(ellipse 90% 60% at 50% 0%, black 30%, transparent 75%);
+  }
+
+  /* ---------- nav ---------- */
+  .nav{
+    position:sticky;top:0;z-index:50;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    background:rgba(8,9,13,.72);
+    border-bottom:1px solid var(--line-soft);
+  }
+  .nav-inner{
+    max-width:1120px;margin:0 auto;padding:14px 24px;
+    display:flex;align-items:center;gap:28px;
+  }
+  .brand{display:flex;align-items:center;gap:10px;text-decoration:none;font-weight:650;letter-spacing:-.01em}
+  .brand-mark{
+    width:28px;height:28px;border-radius:8px;flex:none;
+    background:linear-gradient(135deg,#f0a832,#d97b1e);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .brand-mark svg{display:block}
+  .nav-links{display:flex;gap:22px;margin-left:auto;font-size:14px}
+  .nav-links a{color:var(--muted);text-decoration:none;transition:color .15s}
+  .nav-links a:hover{color:var(--text)}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:9px 18px;border-radius:10px;font-size:14px;font-weight:600;
+    text-decoration:none;cursor:pointer;border:1px solid transparent;
+    transition:transform .12s ease, box-shadow .12s ease, background .12s ease;
+    white-space:nowrap;
+  }
+  .btn-primary{background:var(--amber);color:#1a1206}
+  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(240,168,50,.28)}
+  .btn-ghost{background:rgba(255,255,255,.05);border-color:var(--line);color:var(--text)}
+  .btn-ghost:hover{background:rgba(255,255,255,.09)}
+  .btn-sm{padding:7px 14px;font-size:13px}
+
+  /* ---------- layout ---------- */
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+  section{padding:96px 0}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--amber);margin-bottom:18px;
+  }
+  .eyebrow::before{content:"";width:22px;height:2px;background:var(--amber);border-radius:2px}
+  h2{font-size:clamp(28px,4vw,40px);font-weight:700;letter-spacing:-.03em;line-height:1.15;margin-bottom:14px}
+  .lede{color:var(--muted);font-size:17px;max-width:640px}
+
+  /* ---------- hero ---------- */
+  .hero{padding:110px 0 84px}
+  .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+  .hero h1{
+    font-size:clamp(40px,6vw,64px);font-weight:750;letter-spacing:-.035em;line-height:1.04;
+    margin:18px 0 20px;
+  }
+  .hero h1 .accent{
+    background:linear-gradient(120deg,#f6c453,#f0a832 60%,#e08a1e);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .hero p.sub{color:var(--muted);font-size:18px;max-width:520px;margin-bottom:32px}
+  .hero p.sub strong{color:var(--text);font-weight:600}
+  .cta-row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:44px}
+  .stats{display:flex;gap:36px;flex-wrap:wrap}
+  .stat .num{font-size:22px;font-weight:700;letter-spacing:-.02em}
+  .stat .lbl{font-size:13px;color:var(--faint);margin-top:2px}
+
+  /* mailbox scene */
+  .scene{
+    position:relative;border:1px solid var(--line);border-radius:20px;
+    background:linear-gradient(180deg,var(--panel) 0%,var(--bg-soft) 100%);
+    padding:28px;min-height:380px;overflow:hidden;
+  }
+  .scene .tag{
+    position:absolute;top:16px;left:20px;font-family:var(--mono);font-size:11.5px;color:var(--faint);
+  }
+  .scene .tag b{color:var(--amber);font-weight:600}
+  .chips{position:absolute;top:64px;right:22px;display:flex;flex-direction:column;gap:10px;z-index:3}
+  .chip{
+    font-family:var(--mono);font-size:11.5px;color:var(--muted);
+    background:rgba(255,255,255,.045);border:1px solid var(--line);
+    padding:6px 12px;border-radius:999px;display:flex;align-items:center;gap:8px;
+    animation:floaty 6s ease-in-out infinite;
+  }
+  .chip:nth-child(2){animation-delay:-2s}
+  .chip:nth-child(3){animation-delay:-4s}
+  .chip i{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none}
+  .chip:nth-child(2) i{background:var(--blue)}
+  .chip:nth-child(3) i{background:var(--amber)}
+  @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+  .mailbox-svg{width:100%;height:auto;display:block;margin-top:34px}
+  .flag{transform-box:fill-box;transform-origin:12% 90%;animation:flagWave 9s ease-in-out infinite}
+  @keyframes flagWave{
+    0%,26%{transform:rotate(0deg)}
+    36%,70%{transform:rotate(-74deg)}
+    80%,100%{transform:rotate(0deg)}
+  }
+  .envelope{opacity:0;animation:envIn 9s ease-in-out infinite}
+  @keyframes envIn{
+    0%{transform:translate(150px,-26px);opacity:0}
+    6%{opacity:1}
+    26%{transform:translate(8px,2px);opacity:1}
+    33%{transform:translate(0,12px) scale(.5);opacity:0}
+    100%{transform:translate(0,12px) scale(.5);opacity:0}
+  }
+  .slot-glow{opacity:0;animation:slotPulse 9s ease-in-out infinite}
+  @keyframes slotPulse{
+    0%,30%{opacity:0}
+    38%,62%{opacity:.55}
+    74%,100%{opacity:0}
+  }
+  .scene-foot{
+    margin-top:6px;font-family:var(--mono);font-size:12px;color:var(--faint);
+    display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  }
+  .scene-foot .ok{color:var(--green)}
+
+  /* ---------- steps ---------- */
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:44px}
+  .step{
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:28px 26px;position:relative;overflow:hidden;
+    transition:border-color .15s, transform .15s;
+  }
+  .step:hover{border-color:rgba(240,168,50,.32);transform:translateY(-2px)}
+  .step .n{
+    font-family:var(--mono);font-size:13px;color:var(--amber);
+    border:1px solid rgba(240,168,50,.35);background:var(--amber-soft);
+    width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    margin-bottom:18px;font-weight:700;
+  }
+  .step h3{font-size:17px;font-weight:650;letter-spacing:-.01em;margin-bottom:10px}
+  .step p{font-size:14.5px;color:var(--muted)}
+  .step code{font-family:var(--mono);font-size:12.5px;color:var(--text);background:rgba(255,255,255,.06);padding:2px 7px;border-radius:6px;border:1px solid var(--line-soft)}
+
+  /* ---------- code blocks ---------- */
+  .codeblock{
+    background:#0a0c11;border:1px solid var(--line);border-radius:var(--radius);
+    margin-top:26px;overflow:hidden;
+  }
+  .codeblock + .codeblock{margin-top:18px}
+  .code-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 16px;border-bottom:1px solid var(--line-soft);
+    font-family:var(--mono);font-size:12.5px;color:var(--muted);
+  }
+  .code-head .dots3{display:flex;gap:6px;margin-right:10px}
+  .code-head .dots3 span{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.14)}
+  .code-head .left{display:flex;align-items:center}
+  .copy-btn{
+    font-family:var(--mono);font-size:12px;font-weight:600;
+    background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--muted);
+    padding:5px 12px;border-radius:8px;cursor:pointer;transition:all .15s;
+  }
+  .copy-btn:hover{color:var(--text);border-color:rgba(255,255,255,.2)}
+  .copy-btn.ok{background:rgba(63,185,80,.14);border-color:rgba(63,185,80,.4);color:var(--green)}
+  .codeblock pre{
+    padding:18px 20px;overflow-x:auto;
+    font-family:var(--mono);font-size:13.5px;line-height:1.7;color:#d5dae4;
+  }
+  .codeblock pre .c{color:#5b6373}          /* comment */
+  .codeblock pre .k{color:#f0a832}          /* keyword/flag */
+  .codeblock pre .s{color:#9ece8a}          /* string */
+  .codeblock pre .f{color:#6b9dff}          /* function/method */
+  .note{
+    margin-top:14px;font-size:13.5px;color:var(--faint);
+    border-left:2px solid rgba(240,168,50,.4);padding-left:14px;max-width:720px;
+  }
+  .note code{font-family:var(--mono);font-size:12.5px;color:var(--muted);background:rgba(255,255,255,.05);padding:1px 6px;border-radius:5px}
+
+  /* ---------- API table ---------- */
+  .table-scroll{overflow-x:auto;margin-top:36px;border:1px solid var(--line);border-radius:var(--radius)}
+  table{width:100%;border-collapse:collapse;font-size:14px;min-width:760px;background:var(--panel)}
+  thead th{
+    text-align:left;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);
+    padding:14px 18px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.02);
+    font-weight:700;white-space:nowrap;
+  }
+  tbody td{padding:15px 18px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:rgba(255,255,255,.015)}
+  td.path{font-family:var(--mono);font-size:13px;white-space:nowrap;color:var(--text)}
+  td.auth{font-family:var(--mono);font-size:12.5px;color:var(--muted);white-space:nowrap}
+  td.desc{color:var(--muted);font-size:13.5px;min-width:280px}
+  td.desc code{font-family:var(--mono);font-size:12px;color:var(--text);background:rgba(255,255,255,.06);padding:1px 6px;border-radius:5px}
+  .method{
+    font-family:var(--mono);font-size:11.5px;font-weight:700;letter-spacing:.04em;
+    padding:4px 10px;border-radius:7px;white-space:nowrap;
+  }
+  .m-get{background:rgba(63,185,80,.13);color:#5ed27a;border:1px solid rgba(63,185,80,.3)}
+  .m-post{background:rgba(107,157,255,.13);color:#8db4ff;border:1px solid rgba(107,157,255,.3)}
+  .m-del{background:rgba(229,72,77,.12);color:#f27f83;border:1px solid rgba(229,72,77,.32)}
+
+  /* ---------- agents ---------- */
+  .agent-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:36px;align-items:start}
+  .agent-copy p{color:var(--muted);font-size:15.5px;margin-bottom:16px}
+  .agent-copy p strong{color:var(--text)}
+  .agent-copy code{font-family:var(--mono);font-size:13px;background:rgba(255,255,255,.06);border:1px solid var(--line-soft);padding:2px 8px;border-radius:6px;color:var(--text)}
+
+  /* ---------- security ---------- */
+  .sec-list{margin-top:36px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .sec-item{
+    display:flex;gap:14px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:18px 20px;
+  }
+  .sec-item .tick{
+    flex:none;width:22px;height:22px;border-radius:50%;margin-top:2px;
+    background:rgba(63,185,80,.13);border:1px solid rgba(63,185,80,.4);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .sec-item .tick svg{display:block}
+  .sec-item h4{font-size:14.5px;font-weight:650;margin-bottom:4px}
+  .sec-item p{font-size:13.5px;color:var(--muted)}
+
+  /* ---------- self host ---------- */
+  .host-card{
+    margin-top:32px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);padding:34px;
+    display:flex;gap:28px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+  }
+  .host-card h3{font-size:20px;font-weight:700;letter-spacing:-.02em;margin-bottom:8px}
+  .host-card p{color:var(--muted);font-size:15px;max-width:440px}
+  .host-card code{font-family:var(--mono);font-size:12.5px;color:var(--amber)}
+
+  /* ---------- footer ---------- */
+  footer{border-top:1px solid var(--line-soft);padding:44px 0;position:relative;z-index:1}
+  .foot-inner{
+    max-width:1120px;margin:0 auto;padding:0 24px;
+    display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;
+  }
+  .foot-inner p{font-size:13.5px;color:var(--faint)}
+  .foot-inner p a{color:var(--muted);text-decoration:none;border-bottom:1px solid var(--line)}
+  .foot-inner p a:hover{color:var(--text)}
+  .foot-links{display:flex;gap:20px;font-size:13.5px}
+  .foot-links a{color:var(--muted);text-decoration:none}
+  .foot-links a:hover{color:var(--text)}
+
+  /* ---------- responsive ---------- */
+  @media (max-width:900px){
+    .hero-grid{grid-template-columns:1fr;gap:44px}
+    .steps{grid-template-columns:1fr}
+    .agent-grid{grid-template-columns:1fr}
+    .sec-list{grid-template-columns:1fr}
+    .nav-links{display:none}
+    section{padding:72px 0}
+    .hero{padding:80px 0 60px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    html{scroll-behavior:auto}
+    .envelope{opacity:0}
+  }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<div class="dots"></div>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top" aria-label="Agent Inbox home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="1.5" y="4" width="13" height="9" rx="1.5" stroke="#1a1206" stroke-width="1.6"/>
+          <path d="M2 5.5 8 10l6-4.5" stroke="#1a1206" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      Agent Inbox
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#quickstart">Quickstart</a>
+      <a href="#api">API</a>
+      <a href="#agents">For agents</a>
+      <a href="#security">Security</a>
+    </nav>
+    <a class="btn btn-ghost btn-sm" style="margin-left:auto" href="https://github.com/hrishikeshdeshpande111/agent-inbox" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</header>
+
+<main id="top">
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-grid">
+        <div>
+          <span class="eyebrow">Open source &middot; MIT</span>
+          <h1>A mailbox<br>for your <span class="accent">AI agent.</span></h1>
+          <p class="sub">
+            Agents can call <strong>out</strong> — but nothing can reach <strong>in</strong>.
+            No webhooks, no Stripe events, no GitHub pings, no messages from other agents.
+            Agent Inbox fixes that with one API call: a stable URL your agent owns,
+            where anything that speaks HTTP can deliver.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#quickstart">Get started</a>
+            <a class="btn btn-ghost" href="https://github.com/hrishikeshdeshpande111/agent-inbox" target="_blank" rel="noopener">View on GitHub</a>
+          </div>
+          <div class="stats">
+            <div class="stat"><div class="num">1</div><div class="lbl">API call to provision</div></div>
+            <div class="stat"><div class="num">256 KB</div><div class="lbl">max message size</div></div>
+            <div class="stat"><div class="num">7 days</div><div class="lbl">message retention</div></div>
+          </div>
+        </div>
+
+        <div class="scene" aria-hidden="true">
+          <div class="tag"><b>live</b> &nbsp;in.agent-inbox.dev/mbx_8fK2…</div>
+          <div class="chips">
+            <span class="chip"><i></i>stripe &rarr; payment.succeeded</span>
+            <span class="chip"><i></i>github &rarr; pull_request</span>
+            <span class="chip"><i></i>agent-02 &rarr; task.done</span>
+          </div>
+          <svg class="mailbox-svg" viewBox="0 0 340 250">
+            <ellipse cx="150" cy="232" rx="86" ry="10" fill="rgba(0,0,0,.45)"/>
+            <rect x="144" y="150" width="12" height="78" rx="3" fill="#232936"/>
+            <rect x="138" y="222" width="24" height="8" rx="3" fill="#1a1f2a"/>
+            <!-- mailbox body -->
+            <path d="M84,158 L84,104 Q84,58 150,58 Q216,58 216,104 L216,158 Z"
+                  fill="#161b26" stroke="rgba(255,255,255,.14)" stroke-width="1.5"/>
+            <line x1="196" y1="66" x2="196" y2="158" stroke="rgba(255,255,255,.1)" stroke-width="1.5"/>
+            <circle cx="188" cy="118" r="5" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1.5"/>
+            <!-- slot glow -->
+            <rect class="slot-glow" x="104" y="86" width="60" height="10" rx="5" fill="#f0a832"/>
+            <!-- flag -->
+            <g class="flag">
+              <rect x="222" y="66" width="5" height="58" rx="2.5" fill="#3a4254"/>
+              <rect x="227" y="66" width="36" height="18" rx="4" fill="#e5484d"/>
+              <rect x="227" y="66" width="36" height="18" rx="4" fill="url(#flagSheen)" opacity=".25"/>
+              <defs>
+                <linearGradient id="flagSheen" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+            </g>
+            <!-- incoming envelope -->
+            <g class="envelope">
+              <rect x="252" y="92" width="56" height="38" rx="5" fill="#f2eee3"/>
+              <path d="M252,97 L280,120 L308,97" fill="none" stroke="#cfc8b6" stroke-width="2" stroke-linejoin="round"/>
+              <rect x="252" y="92" width="56" height="38" rx="5" fill="none" stroke="#b9b09a" stroke-width="1.5"/>
+            </g>
+          </svg>
+          <div class="scene-foot">
+            <span>POST /v1/inboxes/mbx_8fK2 &rarr; <span class="ok">202 accepted</span></span>
+            <span>flag up &middot; agent notified</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <section id="how">
+    <div class="wrap">
+      <span class="eyebrow">How it works</span>
+      <h2>Three steps. No dashboard required.</h2>
+      <p class="lede">Everything is an API call. If your agent can make HTTP requests, it can have a mailbox in under a second.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <h3>Create an inbox</h3>
+          <p><code>POST /v1/inboxes</code> returns a stable delivery URL plus a read secret and a write secret. Secrets are shown once — store them.</p>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <h3>Point webhooks at the URL</h3>
+          <p>Stripe, GitHub, cron jobs, or another agent — anything that can POST can deliver. Sources that can't set headers just append <code>?write_secret=…</code>.</p>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <h3>Your agent reads the mail</h3>
+          <p><code>GET /v1/inboxes/{id}/messages</code> lists new arrivals, newest first. Process each one, then <code>DELETE</code> it to acknowledge.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ QUICKSTART ============ -->
+  <section id="quickstart">
+    <div class="wrap">
+      <span class="eyebrow">Quickstart</span>
+      <h2>From zero to receiving in 30 seconds.</h2>
+      <p class="lede">Run the server locally, create an inbox, deliver a message, read it back. Base URL below is <code style="font-family:var(--mono);font-size:14px">http://localhost:8000</code>.</p>
+
+      <div class="codeblock">
+        <div class="code-head">
+          <span class="left"><span class="dots3"><span></span><span></span><span></span></span>1 — create an inbox</span>
+          <button class="copy-btn" data-copy="qs1">copy</button>
+        </div>
+        <pre id="qs1"><span class="c"># Create an inbox. Save url, read_secret and write_secret — shown once.</span>
+curl -s -X POST http://localhost:8000/v1/inboxes \
+  -H <span class="s">"Content-Type: application/json"</span> \
+  -d <span class="s">'{"label": "deploy-watcher"}'</span>
+
+<span class="c"># → 201 {"id":"mbx_8fK2…","url":"…","read_secret":"…","write_secret":"…","created_at":"…"}</span></pre>
+      </div>
+
+      <div class="codeblock">
+        <div class="code-head">
+          <span class="left"><span class="dots3"><span></span><span></span><span></span></span>2 — deliver a message</span>
+          <button class="copy-btn" data-copy="qs2">copy</button>
+        </div>
+        <pre id="qs2"><span class="c"># Deliver with the write secret. Any content type, up to 256 KB.</span>
+curl -s -X POST http://localhost:8000/v1/inboxes/INBOX_ID \
+  -H <span class="s">"X-Write-Secret: WRITE_SECRET"</span> \
+  -H <span class="s">"Content-Type: application/json"</span> \
+  -d <span class="s">'{"event": "payment.succeeded", "amount": 4200}'</span>
+
+<span class="c"># → 202 {"message_id":"msg_…","received_at":"…","signature_valid":null}</span></pre>
+      </div>
+      <p class="note">Webhook sources that can't set headers (Stripe, GitHub): append <code>?write_secret=WRITE_SECRET</code> to the inbox URL instead of sending the header.</p>
+
+      <div class="codeblock">
+        <div class="code-head">
+          <span class="left"><span class="dots3"><span></span><span></span><span></span></span>3 — read the mail</span>
+          <button class="copy-btn" data-copy="qs3">copy</button>
+        </div>
+        <pre id="qs3"><span class="c"># List messages, newest first. Then DELETE each one to acknowledge it.</span>
+curl -s <span class="s">"http://localhost:8000/v1/inboxes/INBOX_ID/messages?limit=10"</span> \
+  -H <span class="s">"X-Read-Secret: READ_SECRET"</span>
+
+curl -s -X DELETE http://localhost:8000/v1/inboxes/INBOX_ID/messages/MSG_ID \
+  -H <span class="s">"X-Read-Secret: READ_SECRET"</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ API REFERENCE ============ -->
+  <section id="api">
+    <div class="wrap">
+      <span class="eyebrow">API reference</span>
+      <h2>Small enough to memorize.</h2>
+      <p class="lede">Eight endpoints. JSON everywhere. Auth is a single header per call — no OAuth dance, no SDK required.</p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Method</th><th>Endpoint</th><th>Auth</th><th>What it does</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="method m-post">POST</span></td>
+              <td class="path">/v1/inboxes</td>
+              <td class="auth">—</td>
+              <td class="desc">Create an inbox. Body: <code>{"label": "optional"}</code>. Returns <code>201</code> with <code>id</code>, <code>url</code>, <code>read_secret</code>, <code>write_secret</code>, <code>created_at</code>.</td>
+            </tr>
+            <tr>
+              <td><span class="method m-post">POST</span></td>
+              <td class="path">/v1/inboxes/{id}</td>
+              <td class="auth">X-Write-Secret<br>or ?write_secret=</td>
+              <td class="desc">Deliver a message. Any content type, 256&nbsp;KB cap. Optional <code>X-Signature-256</code> header for HMAC-SHA256 verification. Returns <code>202</code> with <code>message_id</code>, <code>received_at</code>, <code>signature_valid</code>.</td>
+            </tr>
+            <tr>
+              <td><span class="method m-get">GET</span></td>
+              <td class="path">/v1/inboxes/{id}/messages</td>
+              <td class="auth">X-Read-Secret</td>
+              <td class="desc">List messages, newest first. <code>?limit</code> (default 50), <code>?before_id</code> for keyset pagination. Each message carries <code>id</code>, <code>received_at</code>, <code>content_type</code>, <code>body</code>, <code>headers</code>, <code>signature_valid</code>.</td>
+            </tr>
+            <tr>
+              <td><span class="method m-del">DELETE</span></td>
+              <td class="path">/v1/inboxes/{id}/messages/{message_id}</td>
+              <td class="auth">X-Read-Secret</td>
+              <td class="desc">Acknowledge a message — deletes it after your agent has processed it.</td>
+            </tr>
+            <tr>
+              <td><span class="method m-get">GET</span></td>
+              <td class="path">/v1/inboxes/{id}</td>
+              <td class="auth">X-Read-Secret</td>
+              <td class="desc">Inbox info, including <code>message_count</code>.</td>
+            </tr>
+            <tr>
+              <td><span class="method m-post">POST</span></td>
+              <td class="path">/v1/inboxes/{id}/rotate</td>
+              <td class="auth">X-Read-Secret</td>
+              <td class="desc">Rotate both secrets. The old pair stops working immediately; the new pair is returned once.</td>
+            </tr>
+            <tr>
+              <td><span class="method m-del">DELETE</span></td>
+              <td class="path">/v1/inboxes/{id}</td>
+              <td class="auth">X-Read-Secret</td>
+              <td class="desc">Delete the inbox and every message in it. Irreversible.</td>
+            </tr>
+            <tr>
+              <td><span class="method m-get">GET</span></td>
+              <td class="path">/health</td>
+              <td class="auth">—</td>
+              <td class="desc">Liveness probe. Returns <code>{"status":"ok"}</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FOR AGENTS ============ -->
+  <section id="agents">
+    <div class="wrap">
+      <span class="eyebrow">For agents</span>
+      <h2>Usable unassisted.</h2>
+      <div class="agent-grid">
+        <div class="agent-copy">
+          <p>The repo ships a <code>SKILL.md</code>. Drop it into your agent's skills folder and any agent — <strong>Claude Code, Cursor, and friends</strong> — can provision inboxes, hand the delivery URL to webhook sources, and drain mail on a schedule, with no human in the loop.</p>
+          <p>The intended loop is simple: a scheduled worker polls <code>/messages</code>, handles each arrival, and <code>DELETE</code>s it. The inbox is the decoupling point between the event and whatever runtime wakes your agent.</p>
+          <p>This page documents the contract; the skill teaches the workflow. Together they're the whole integration.</p>
+        </div>
+        <div>
+          <div class="codeblock" style="margin-top:0">
+            <div class="code-head">
+              <span class="left"><span class="dots3"><span></span><span></span><span></span></span>agent polling loop — python</span>
+              <button class="copy-btn" data-copy="agent1">copy</button>
+            </div>
+            <pre id="agent1"><span class="k">import</span> requests, time
+
+API = <span class="s">"http://localhost:8000"</span>
+
+<span class="c"># once: provision a mailbox, point webhooks at inbox["url"]</span>
+inbox = requests.<span class="f">post</span>(<span class="s">f"{API}/v1/inboxes"</span>, json={<span class="s">"label"</span>: <span class="s">"deploy-watcher"</span>}).json()
+iid, rsec = inbox[<span class="s">"id"</span>], inbox[<span class="s">"read_secret"</span>]
+hdr = {<span class="s">"X-Read-Secret"</span>: rsec}
+
+<span class="c"># forever: drain new mail</span>
+<span class="k">while True</span>:
+    msgs = requests.<span class="f">get</span>(<span class="s">f"{API}/v1/inboxes/{iid}/messages"</span>,
+                        headers=hdr, params={<span class="s">"limit"</span>: 20}).json()
+    <span class="k">for</span> m <span class="k">in</span> msgs[<span class="s">"messages"</span>]:
+        handle(m)  <span class="c"># your logic here</span>
+        requests.<span class="f">delete</span>(<span class="s">f"{API}/v1/inboxes/{iid}/messages/{m['id']}"</span>, headers=hdr)
+    time.<span class="f">sleep</span>(60)</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SECURITY ============ -->
+  <section id="security">
+    <div class="wrap">
+      <span class="eyebrow">Security model</span>
+      <h2>Built like infrastructure, not a demo.</h2>
+      <p class="lede">A public POST endpoint is a promise. Here's how that promise is kept.</p>
+      <div class="sec-list">
+        <div class="sec-item">
+          <span class="tick" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 6l2.6 2.6L9.5 3" stroke="#3fb950" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div><h4>Unguessable inbox IDs</h4><p>IDs are cryptographically random. There is no enumeration — you can't find an inbox you weren't given.</p></div>
+        </div>
+        <div class="sec-item">
+          <span class="tick" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 6l2.6 2.6L9.5 3" stroke="#3fb950" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div><h4>Secrets shown once, stored as hashes</h4><p>Read and write secrets are returned a single time at creation or rotation, then stored only as salted hashes.</p></div>
+        </div>
+        <div class="sec-item">
+          <span class="tick" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 6l2.6 2.6L9.5 3" stroke="#3fb950" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div><h4>Read/write separation</h4><p>The delivery key can't read mail; the read key can't deliver. A leaked webhook URL never exposes message contents.</p></div>
+        </div>
+        <div class="sec-item">
+          <span class="tick" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 6l2.6 2.6L9.5 3" stroke="#3fb950" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div><h4>HMAC webhook verification</h4><p>Send <code style="font-family:var(--mono);font-size:12px">X-Signature-256</code> with deliveries; the server verifies the HMAC-SHA256 and reports <code style="font-family:var(--mono);font-size:12px">signature_valid</code> on every message.</p></div>
+        </div>
+        <div class="sec-item">
+          <span class="tick" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 6l2.6 2.6L9.5 3" stroke="#3fb950" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div><h4>Rate limiting</h4><p>Per-inbox and global limits on deliveries and reads. One noisy sender can't crowd out the rest.</p></div>
+        </div>
+        <div class="sec-item">
+          <span class="tick" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 6l2.6 2.6L9.5 3" stroke="#3fb950" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div><h4>7-day retention, then purged</h4><p>Messages live for seven days and are then deleted automatically. Acknowledge with DELETE to clear them sooner.</p></div>
+        </div>
+        <div class="sec-item">
+          <span class="tick" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 6l2.6 2.6L9.5 3" stroke="#3fb950" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div><h4>Sensitive headers redacted</h4><p>Authorization-style headers on incoming deliveries are stripped before storage — they're never persisted or returned.</p></div>
+        </div>
+        <div class="sec-item">
+          <span class="tick" aria-hidden="true"><svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 6l2.6 2.6L9.5 3" stroke="#3fb950" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div><h4>256 KB message cap</h4><p>Oversized deliveries are rejected before they're stored. The inbox stays a mailbox, not a file host.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SELF HOST ============ -->
+  <section id="selfhost">
+    <div class="wrap">
+      <span class="eyebrow">Self-hosting</span>
+      <h2>One command. Yours entirely.</h2>
+      <div class="host-card">
+        <div>
+          <h3>Run it anywhere Docker runs.</h3>
+          <p>No accounts, no API keys, no telemetry. Configuration lives in the repo README.</p>
+        </div>
+        <div class="codeblock" style="margin-top:0;flex:1;min-width:min(100%,420px)">
+          <div class="code-head">
+            <span class="left"><span class="dots3"><span></span><span></span><span></span></span>terminal</span>
+            <button class="copy-btn" data-copy="docker1">copy</button>
+          </div>
+          <pre id="docker1">docker run -d -p 8000:8000 --name agent-inbox \
+  hrishikeshdeshpande111/agent-inbox</pre>
+        </div>
+      </div>
+      <p class="note">Then open <code>http://localhost:8000</code> — the API and this page are served together.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="foot-inner">
+    <p><a href="https://github.com/hrishikeshdeshpande111/agent-inbox" target="_blank" rel="noopener">github.com/hrishikeshdeshpande111/agent-inbox</a> &nbsp;·&nbsp; MIT licensed — free for personal and commercial use.</p>
+    <div class="foot-links">
+      <a href="#how">How it works</a>
+      <a href="#api">API</a>
+      <a href="#security">Security</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  function fallbackCopy(text, btn){
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch(e){}
+    document.body.removeChild(ta);
+    flash(btn);
+  }
+  function flash(btn){
+    var orig = btn.textContent;
+    btn.textContent = 'copied';
+    btn.classList.add('ok');
+    setTimeout(function(){ btn.textContent = orig; btn.classList.remove('ok'); }, 1600);
+  }
+  document.querySelectorAll('[data-copy]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var el = document.getElementById(btn.getAttribute('data-copy'));
+      if(!el) return;
+      var text = el.innerText.replace(/\n+$/,'');
+      if (navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(function(){ flash(btn); }, function(){ fallbackCopy(text, btn); });
+      } else {
+        fallbackCopy(text, btn);
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>
