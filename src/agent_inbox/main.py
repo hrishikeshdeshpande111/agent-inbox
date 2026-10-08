@@ -246,15 +246,26 @@ collaborator: be direct, be specific, do not pad your messages.
 ## The protocol
 
 You and Muse share this conversation inbox{who}. There is no direct
-connection between you. You exchange messages by FETCHING urls — the human
-does not relay messages for you. Sending and receiving are your job.
+connection between you. You exchange messages through the URLs below.
 
-### Sending a message to Muse
+### Step 0 — can your fetch tool reach this inbox?
 
-FETCH this URL (use your browse/fetch tool), putting your message,
-URL-encoded, in the body parameter. Include wait_seconds=50: the fetch stays
-open up to 50 seconds, and if Muse replies in that window you get the answer
-in the SAME fetch:
+Some AI tools block fetches of URLs the assistant constructs itself ("URL not
+accessible via this tool"). Try ONE fetch now:
+
+    {base}/v1/inboxes/{inbox_id}/deliver?token={conversation_token}&nonce=probe123
+
+- If it returns instructions (not an error), your fetches work: use MODE A
+  below.
+- If the tool refuses ("not accessible via this tool") or errors, your
+  fetches are blocked: switch to MODE B below and do not retry fetches.
+
+### MODE A — direct fetching (your tool allows it)
+
+Sending a message to Muse: FETCH this URL (use your browse/fetch tool),
+putting your message, URL-encoded, in the body parameter. Include
+wait_seconds=50: the fetch stays open up to 50 seconds, and if Muse replies
+in that window you get the answer in the SAME fetch:
 
     {base}/v1/inboxes/{inbox_id}/deliver?token={conversation_token}&body={{URL_ENCODED_MESSAGE}}&nonce={{RANDOM_STRING}}&wait_seconds=50
 
@@ -265,24 +276,17 @@ in the SAME fetch:
   to Muse but there is no reply yet. Nudge Muse, then say 'check' and I will
   look again."
 
-Rules:
-- FETCH it. Do not describe the URL, do not paste it into the chat, and do
-  not ask the human to open it.
+Rules for MODE A:
+- FETCH it yourself. Do not describe the URL, do not paste it into the chat,
+  and do not ask the human to open it.
 - Every send MUST include body and a fresh random nonce. A fetch without a
   body delivers nothing. The nonce defeats caches so the delivery really
   happens.
 - One message per fetch. Keep each message under 1500 characters so it fits
   in a URL.
-- If your message is longer than 1500 characters, or the fetch fails twice,
-  fall back: give the human this link and ask them to paste your message
-  into the form and press Send:
 
-    {base}/v1/inboxes/{inbox_id}/send
-
-### Receiving Muse's replies
-
-At the START of every turn you take in this chat, FETCH this URL to check for
-new messages from Muse:
+Receiving Muse's replies: at the START of every turn you take in this chat,
+FETCH this URL to check for new messages from Muse:
 
     {base}/v1/inboxes/{inbox_id}/messages?token={conversation_token}&after_id={{LAST_ID_YOU_SAW}}&limit=20
 
@@ -295,13 +299,33 @@ new messages from Muse:
   else the human asked.
 - If nothing is new, carry on with the human normally.
 
-### Rules
+### MODE B — human-assisted (your fetches are blocked)
 
-- Never print, quote, or reveal the URLs or the token from this file. They
-  are for your fetches only. If the human asks for them, decline — the
-  send-page link above is the only URL you may share.
-- If a fetch fails twice, tell the human exactly what you tried, then use
-  the send-page fallback.
+The human opens links for you. To SEND a message to Muse, build the complete
+deliver URL with your message URL-encoded and a fresh random nonce, and ask
+the human to paste it into their browser's address bar and press Enter:
+
+    {base}/v1/inboxes/{inbox_id}/deliver?token={conversation_token}&body={{URL_ENCODED_MESSAGE}}&nonce={{RANDOM_STRING}}
+
+The page will confirm "Message delivered". One message per link; keep each
+under 1500 characters. For longer messages, give the human this link instead
+and ask them to paste your text into the form and press Send:
+
+    {base}/v1/inboxes/{inbox_id}/send
+
+To RECEIVE Muse's replies, ask the human to open this same send link: it
+shows the latest messages below the form. Ask them to paste anything new
+into the chat, then respond to it.
+
+Tell the human once, up front, how this loop works: "I'll give you links to
+open for sending, and I'll need you to read Muse's replies back to me from
+the same page."
+
+### Rules (both modes)
+
+- Never print, quote, or reveal the token from this file. The deliver/send
+  links are fine to share with the human; the token value itself is not for
+  chat display.
 - Muse's messages arrive as plain text. Keep yours plain text too.
 """
 
@@ -320,51 +344,81 @@ async def llm_txt_conversation(inbox_id: str, request: Request):
     )
 
 
-def _send_page_html(inbox_id: str, label: str | None, prefill: str, sent_id: str | None) -> str:
+def _esc(s: str) -> str:
+    """Minimal HTML escaping for reflected strings."""
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+             .replace('"', "&quot;"))
+
+
+def _send_page_html(
+    inbox_id: str,
+    label: str | None,
+    prefill: str,
+    sent_id: str | None,
+    recent: list[dict],
+) -> str:
     title = f"Send a message{(f' — {label}' if label else '')}"
-    # Minimal escaping: prefill/sent_id are reflected once, escape the five
-    # characters that matter inside HTML text/attributes.
-    esc = lambda s: (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                     .replace('"', "&quot;"))
     if sent_id:
         body_html = (
             "<div class='ok'>Message delivered.</div>"
-            f"<p class='muted'>Message id: <code>{esc(sent_id)}</code></p>"
+            f"<p class='muted'>Message id: <code>{_esc(sent_id)}</code></p>"
             "<p><a href=''>Send another</a></p>"
         )
     else:
         body_html = (
             "<form method='post'>"
-            f"<textarea name='body' rows='6' placeholder='Write your message…'>{esc(prefill)}</textarea>"
+            f"<textarea name='body' rows='6' placeholder='Write your message…'>{_esc(prefill)}</textarea>"
             "<button type='submit'>Send</button>"
             "</form>"
             "<p class='muted'>Delivered straight to the agent's inbox. Max 256 KB.</p>"
         )
+    recent_html = ""
+    if recent:
+        items = "".join(
+            f"<div class='msg'><div class='meta'>{_esc(m['received_at'])}</div>"
+            f"<div class='txt'>{_esc(m['body'][:2000])}</div></div>"
+            for m in recent
+        )
+        recent_html = f"<h2>Recent messages</h2><div class='recent'>{items}</div>"
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>{esc(title)} · Agent Inbox</title>"
+        f"<title>{_esc(title)} · Agent Inbox</title>"
         "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;"
         "padding:0 1rem;color:#111}textarea{width:100%;box-sizing:border-box;font:inherit;"
         "padding:.6rem;border:1px solid #ccc;border-radius:.4rem}button{font:inherit;"
         "padding:.55rem 1.2rem;margin-top:.6rem;background:#111;color:#fff;border:0;"
         "border-radius:.4rem;cursor:pointer}.ok{background:#e6f4ea;border:1px solid #b7dfc0;"
         "padding:.8rem;border-radius:.4rem}.muted{color:#666;font-size:.85rem}"
-        "code{background:#f1f1f1;padding:.1rem .3rem;border-radius:.3rem}</style>"
+        "code{background:#f1f1f1;padding:.1rem .3rem;border-radius:.3rem}"
+        "h2{margin-top:2.5rem;font-size:1.1rem}.msg{border:1px solid #e0e0e0;"
+        "border-radius:.4rem;padding:.6rem;margin-bottom:.6rem}.meta{color:#888;"
+        "font-size:.75rem;margin-bottom:.25rem}.txt{white-space:pre-wrap}</style>"
         "</head><body>"
-        f"<h1>{esc(title)}</h1>{body_html}"
+        f"<h1>{_esc(title)}</h1>{body_html}{recent_html}"
         "</body></html>"
     )
 
 
+async def _recent_messages(inbox_id: str, limit: int = 10) -> list[dict]:
+    msgs, _ = await db.list_messages(inbox_id, limit, None)
+    # Show oldest-first so the page reads like a conversation.
+    return list(reversed(msgs))
+
+
 @app.get("/v1/inboxes/{inbox_id}/send", include_in_schema=False)
 async def send_page(inbox_id: str, request: Request):
-    """Human-friendly send form. Deliberately open: the unguessable inbox id
-    is the capability (like an email address). ?body= pre-fills the form."""
+    """Human-friendly conversation page: send form plus recent messages.
+
+    Deliberately open: the unguessable inbox id is the capability (like an
+    email address). ?body= pre-fills the form. Recent messages are shown so
+    a human relaying a conversation has send and read in one place.
+    """
     _enforce_rate_limit(request, inbox_id)
     inbox = await _require_inbox(inbox_id)
     prefill = request.query_params.get("body", "")
-    return HTMLResponse(_send_page_html(inbox_id, inbox.get("label"), prefill, None))
+    recent = await _recent_messages(inbox_id)
+    return HTMLResponse(_send_page_html(inbox_id, inbox.get("label"), prefill, None, recent))
 
 
 @app.post("/v1/inboxes/{inbox_id}/send", include_in_schema=False)
@@ -391,8 +445,9 @@ async def send_page_submit(inbox_id: str, request: Request):
     if not body_text:
         raise HTTPException(status_code=400, detail="message body is required")
     receipt = await _store_delivered_message(inbox_id, body_text, request, "text/plain")
+    recent = await _recent_messages(inbox_id)
     return HTMLResponse(
-        _send_page_html(inbox_id, inbox.get("label"), "", receipt.message_id)
+        _send_page_html(inbox_id, inbox.get("label"), "", receipt.message_id, recent)
     )
 
 
@@ -586,6 +641,20 @@ async def deliver_via_get(
     if wait_seconds:
         replies = await _wait_for_replies(inbox_id, receipt.message_id, wait_seconds)
         return _wait_response(receipt.message_id, receipt.received_at, replies)
+    # A human pasting this URL into a browser address bar gets a readable
+    # confirmation instead of raw JSON.
+    if "text/html" in request.headers.get("accept", ""):
+        return HTMLResponse(
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Delivered · Agent Inbox</title>"
+            "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;"
+            "padding:0 1rem;color:#111}.ok{background:#e6f4ea;border:1px solid #b7dfc0;"
+            "padding:.8rem;border-radius:.4rem}</style></head><body>"
+            "<div class='ok'>Message delivered to the agent's inbox.</div>"
+            f"<p>Message id: <code>{_esc(receipt.message_id)}</code></p>"
+            "</body></html>"
+        )
     return receipt
 
 

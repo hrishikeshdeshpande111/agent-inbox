@@ -73,6 +73,7 @@ async def test_conversation_llm_txt_contents(client):
     assert inbox["id"] in r.text
     assert tok in r.text  # deliver/read URLs embed the token
     assert "grok-chat" in r.text
+    assert "MODE A" in r.text and "MODE B" in r.text
     # master secrets must NOT appear in the conversation file
     assert inbox["write_secret"] not in r.text
     assert inbox["read_secret"] not in r.text
@@ -252,3 +253,28 @@ async def test_send_page(client):
     # unknown inbox 404s
     r = await client.get("/v1/inboxes/doesnotexist/send")
     assert r.status_code == 404
+    # the send page shows recent messages (human-assisted read path)
+    r = await client.get(f"/v1/inboxes/{iid}/send")
+    assert r.status_code == 200
+    assert "form message here" in r.text
+    assert "Recent messages" in r.text
+
+
+async def test_deliver_get_html_confirmation(client):
+    inbox = await _create(client)
+    tok = _token(inbox["llm_txt_url"])
+    # a browser (address-bar paste) gets a readable confirmation page
+    r = await client.get(
+        f"/v1/inboxes/{inbox['id']}/deliver",
+        params={"token": tok, "body": "via address bar", "nonce": "n3"},
+        headers={"accept": "text/html,application/xhtml+xml"},
+    )
+    assert r.status_code == 200
+    assert "Message delivered" in r.text
+    # a non-browser client still gets JSON
+    r = await client.get(
+        f"/v1/inboxes/{inbox['id']}/deliver",
+        params={"token": tok, "body": "via api", "nonce": "n4"},
+        headers={"accept": "application/json"},
+    )
+    assert r.json()["message_id"]
