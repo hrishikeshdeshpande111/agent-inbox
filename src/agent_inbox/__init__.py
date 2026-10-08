@@ -3,4 +3,4 @@
 Give any agent a URL. Anything that can POST a webhook can reach it.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

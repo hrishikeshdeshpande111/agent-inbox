@@ -9,8 +9,16 @@ class Settings:
     # Filesystem path for the SQLite database. Parent dirs are created on boot.
     db_path: str = os.environ.get("AGENT_INBOX_DB_PATH", "data/agent-inbox.db")
     # Public base URL used when constructing inbox URLs handed to users.
-    # Set this to your real domain in production, e.g. https://inbox.example.com
-    base_url: str = os.environ.get("AGENT_INBOX_BASE_URL", "http://localhost:8000").rstrip("/")
+    # Set AGENT_INBOX_BASE_URL explicitly in production; on Fly.io it is
+    # derived automatically from FLY_APP_NAME when unset.
+    base_url: str = (
+        os.environ.get("AGENT_INBOX_BASE_URL")
+        or (
+            f"https://{os.environ['FLY_APP_NAME']}.fly.dev"
+            if os.environ.get("FLY_APP_NAME")
+            else "http://localhost:8000"
+        )
+    ).rstrip("/")
     # Messages older than this are purged by the background cleanup task.
     retention_days: int = int(os.environ.get("AGENT_INBOX_RETENTION_DAYS", "7"))
     # Max requests per minute, enforced per (client IP) and per (inbox, IP).

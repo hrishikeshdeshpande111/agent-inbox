@@ -14,6 +14,9 @@ class CreateInboxResponse(BaseModel):
     url: str
     read_secret: str
     write_secret: str
+    # Paste this one line into any AI chat to start a cross-agent conversation.
+    # It embeds a scoped conversation token (deliver + read only).
+    llm_txt_url: str
     created_at: str
 
 
@@ -54,6 +57,8 @@ class RotateSecretsResponse(BaseModel):
     id: str
     read_secret: str
     write_secret: str
+    # Fresh conversation link; the previous conversation token is invalidated.
+    llm_txt_url: str
 
 
 class HealthResponse(BaseModel):
