@@ -1,1 +1,0 @@
-{"interface":{"displayName":"Agent Inbox"},"name":"agent-inbox","plugins":[{"category":"Productivity","name":"agent-inbox","policy":{"authentication":"ON_INSTALL","installation":"AVAILABLE"},"source":{"path":"./agent-inbox","source":"local"}}]}
