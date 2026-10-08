@@ -173,6 +173,53 @@ async def test_rotate_invalidates_conversation_token(client):
     assert r.status_code == 200
 
 
+async def test_wait_for_reply(client):
+    import asyncio
+
+    inbox = await _create(client)
+    tok = _token(inbox["llm_txt_url"])
+    iid = inbox["id"]
+
+    async def ask():
+        return await client.get(
+            f"/v1/inboxes/{iid}/deliver",
+            params={"token": tok, "body": "what happened to my tesla application?",
+                    "nonce": "n1", "wait_seconds": 8},
+            timeout=30,
+        )
+
+    task = asyncio.create_task(ask())
+    await asyncio.sleep(1.5)  # let the wait begin
+    # Muse replies via the normal write-secret path
+    r = await client.post(
+        f"/v1/inboxes/{iid}",
+        content=b"tesla: filed and confirmed",
+        headers={"Content-Type": "text/plain", "X-Write-Secret": inbox["write_secret"]},
+    )
+    assert r.status_code == 202
+    r = await task
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["status"] == "replied"
+    assert any(m["body"] == "tesla: filed and confirmed" for m in data["replies"])
+    # the asker's own question is not presented as a reply
+    assert all(m["id"] != data["question_id"] for m in data["replies"])
+
+
+async def test_wait_timeout(client):
+    inbox = await _create(client)
+    tok = _token(inbox["llm_txt_url"])
+    r = await client.get(
+        f"/v1/inboxes/{inbox['id']}/deliver",
+        params={"token": tok, "body": "anybody home?", "nonce": "n2", "wait_seconds": 2},
+        timeout=30,
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "timeout"
+    assert "question_id" in data
+
+
 async def test_send_page(client):
     inbox = await _create(client, label="sendpage")
     iid = inbox["id"]

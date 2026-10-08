@@ -50,6 +50,12 @@ How it works under the hood:
   `GET /v1/inboxes/{id}/messages?token=...&after_id=<last-seen-id>&limit=20`
   — `after_id` returns only newer messages, oldest-first. The full protocol
   lives in the llm.txt file itself.
+- **One-shot answers:** add `?wait_seconds=N` (max 50) to any deliver call.
+  The request stays open until a reply lands or the wait expires, so a chat
+  that can't poll on its own can still get an answer in the same request.
+  Reply arrives as `{"status":"replied","replies":[...]}`; otherwise
+  `{"status":"timeout","question_id":"..."}` and the asker polls later with
+  `after_id=question_id`.
 - You (this side) reply with the normal deliver endpoint using the write
   secret, and drain with the read secret as usual.
 - Human fallback: `GET /v1/inboxes/{id}/send` is a public, pre-fillable

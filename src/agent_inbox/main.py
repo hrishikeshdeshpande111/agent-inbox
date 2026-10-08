@@ -252,9 +252,18 @@ does not relay messages for you. Sending and receiving are your job.
 ### Sending a message to Muse
 
 FETCH this URL (use your browse/fetch tool), putting your message,
-URL-encoded, in the body parameter:
+URL-encoded, in the body parameter. Include wait_seconds=50: the fetch stays
+open up to 50 seconds, and if Muse replies in that window you get the answer
+in the SAME fetch:
 
-    {base}/v1/inboxes/{inbox_id}/deliver?token={conversation_token}&body={{URL_ENCODED_MESSAGE}}&nonce={{RANDOM_STRING}}
+    {base}/v1/inboxes/{inbox_id}/deliver?token={conversation_token}&body={{URL_ENCODED_MESSAGE}}&nonce={{RANDOM_STRING}}&wait_seconds=50
+
+- If the response has status "replied", the replies array holds Muse's
+  answer. Ignore any reply whose id matches a message you sent; present the
+  rest to the human as Muse's answer.
+- If the response has status "timeout", tell the human: "I sent your message
+  to Muse but there is no reply yet. Nudge Muse, then say 'check' and I will
+  look again."
 
 Rules:
 - FETCH it. Do not describe the URL, do not paste it into the chat, and do
@@ -278,9 +287,10 @@ new messages from Muse:
     {base}/v1/inboxes/{inbox_id}/messages?token={conversation_token}&after_id={{LAST_ID_YOU_SAW}}&limit=20
 
 - On your first check, leave out the after_id parameter.
-- Remember the "id" of the newest message you saw. Pass it as after_id on
-  your next check, so you only see what is new. Messages come back oldest
-  first, in conversation order.
+- Remember the "id" of the newest message you saw (including the id of any
+  question you sent, which comes back in the deliver response as question_id
+  or message_id). Pass it as after_id on your next check, so you only see
+  what is new. Messages come back oldest first, in conversation order.
 - If Muse sent something new, respond to its content first, before anything
   else the human asked.
 - If nothing is new, carry on with the human normally.
@@ -449,13 +459,64 @@ async def _store_delivered_message(
     )
 
 
+async def _wait_for_replies(
+    inbox_id: str, after_message_id: str, wait_seconds: int
+) -> list[dict]:
+    """Long-poll for messages newer than after_message_id.
+
+    Lets a sender that cannot poll on its own (a plain AI chat whose turns
+    are human-driven) receive a reply inside the same request. Returns the
+    new messages oldest-first, or [] on timeout. The caller filters out its
+    own messages by id.
+    """
+    # Cap the wait below typical proxy idle timeouts (Fly closes idle
+    # connections at ~60s).
+    deadline = time.monotonic() + min(wait_seconds, 50)
+    while time.monotonic() < deadline:
+        await asyncio.sleep(1)
+        msgs, _ = await db.list_messages(inbox_id, 20, None, after_id=after_message_id)
+        if msgs:
+            return msgs
+    return []
+
+
+def _wait_response(question_id: str, received_at: str, replies: list[dict]):
+    if replies:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "replied",
+                "question_id": question_id,
+                "replies": [
+                    {"id": m["id"], "body": m["body"], "received_at": m["received_at"]}
+                    for m in replies
+                ],
+            },
+        )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "timeout",
+            "question_id": question_id,
+            "received_at": received_at,
+            "hint": "No reply yet. Ask the human to nudge the agent, then fetch the "
+            "messages URL again with after_id set to question_id.",
+        },
+    )
+
+
 @app.post("/v1/inboxes/{inbox_id}", response_model=models.DeliverResponse, status_code=202)
 async def deliver(
     inbox_id: str,
     request: Request,
     x_signature_256: str | None = Header(default=None),
+    wait_seconds: int = Query(default=0, ge=0, le=50),
 ):
-    """Deliver a message. Body may be any content type (JSON recommended)."""
+    """Deliver a message. Body may be any content type (JSON recommended).
+
+    wait_seconds>0 long-polls for a reply so senders that can't poll on
+    their own (plain AI chats) can get an answer in the same request.
+    """
     _enforce_rate_limit(request, inbox_id)
     inbox = await _require_inbox(inbox_id)
     provided = _write_secret(request)
@@ -475,13 +536,21 @@ async def deliver(
     except UnicodeDecodeError:
         raise HTTPException(status_code=415, detail="body must be UTF-8 text or JSON")
 
-    return await _store_delivered_message(
+    receipt = await _store_delivered_message(
         inbox_id, body_text, request, request.headers.get("content-type"), signature_valid
     )
+    if wait_seconds:
+        replies = await _wait_for_replies(inbox_id, receipt.message_id, wait_seconds)
+        return _wait_response(receipt.message_id, receipt.received_at, replies)
+    return receipt
 
 
 @app.get("/v1/inboxes/{inbox_id}/deliver", status_code=202)
-async def deliver_via_get(inbox_id: str, request: Request):
+async def deliver_via_get(
+    inbox_id: str,
+    request: Request,
+    wait_seconds: int = Query(default=0, ge=0, le=50),
+):
     """Deliver a message with a plain GET fetch.
 
     This is the rendezvous primitive for AI chats that can browse but cannot
@@ -493,6 +562,9 @@ async def deliver_via_get(inbox_id: str, request: Request):
     messages. Auth is the write secret or the scoped conversation token, both
     accepted as query params (the same pattern the POST endpoint already
     supports for header-less webhook sources).
+
+    wait_seconds>0 holds the fetch open for a reply, so a chat that cannot
+    poll on its own can still get an answer in one shot.
     """
     _enforce_rate_limit(request, inbox_id)
     inbox = await _require_inbox(inbox_id)
@@ -504,12 +576,17 @@ async def deliver_via_get(inbox_id: str, request: Request):
             "Agent Inbox delivery endpoint.\n"
             "To deliver a message, fetch this URL with your message URL-encoded:\n"
             "  ?token=<conversation-token>&body=<message>&nonce=<random-string>\n"
+            "Add &wait_seconds=50 to wait up to 50s for a reply in the same fetch.\n"
             "One message per fetch; keep messages under ~1500 characters.\n"
             f"Full protocol: {settings.base_url}/v1/inboxes/{inbox_id}/llm.txt?token=<conversation-token>\n",
             media_type="text/plain",
             status_code=200,
         )
-    return await _store_delivered_message(inbox_id, body_text, request, "text/plain")
+    receipt = await _store_delivered_message(inbox_id, body_text, request, "text/plain")
+    if wait_seconds:
+        replies = await _wait_for_replies(inbox_id, receipt.message_id, wait_seconds)
+        return _wait_response(receipt.message_id, receipt.received_at, replies)
+    return receipt
 
 
 @app.get("/v1/inboxes/{inbox_id}/messages", response_model=models.ListMessagesResponse)
