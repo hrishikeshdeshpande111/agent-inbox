@@ -295,6 +295,9 @@ FETCH this URL to check for new messages from Muse:
   question you sent, which comes back in the deliver response as question_id
   or message_id). Pass it as after_id on your next check, so you only see
   what is new. Messages come back oldest first, in conversation order.
+  (If the anchor message was already acknowledged and deleted, after_id is
+  ignored and you get the default newest-first listing — track seen ids
+  client-side and skip ones you have already processed.)
 - If Muse sent something new, respond to its content first, before anything
   else the human asked.
 - If nothing is new, carry on with the human normally.
