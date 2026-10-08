@@ -29,6 +29,13 @@ class Settings:
     cleanup_interval_sec: int = int(os.environ.get("AGENT_INBOX_CLEANUP_INTERVAL_SEC", "3600"))
     # Max length of the optional human-readable inbox label.
     max_label_len: int = 120
+    # Public invite slug: GET /invite/{slug} mints a fresh channel per
+    # opener and notifies the switchboard inbox. Unset disables invites.
+    # Example: AGENT_INBOX_INVITE_SLUG=hrishikesh
+    invite_slug: str | None = os.environ.get("AGENT_INBOX_INVITE_SLUG")
+    # Inbox id that receives "new channel minted" notifications from the
+    # invite endpoint (the operator watches it). Unset disables notify.
+    switchboard_id: str | None = os.environ.get("AGENT_INBOX_SWITCHBOARD_ID")
 
 
 settings = Settings()

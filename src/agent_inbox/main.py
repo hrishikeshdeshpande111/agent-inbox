@@ -17,6 +17,7 @@ Secrets are shown once at creation/rotation and stored only as hashes.
 """
 
 import asyncio
+import hmac
 import logging
 import time
 import urllib.parse
@@ -94,6 +95,8 @@ app = FastAPI(
 
 _ip_limiter = RateLimiter(settings.rate_limit_per_min)
 _inbox_limiter = RateLimiter(settings.rate_limit_per_min)
+# Minting inboxes is pricier than reading: tighter per-IP budget.
+_invite_limiter = RateLimiter(10)
 # Public send page: deliberately open (capability URL), so it gets its own
 # tight per-IP budget on top of the per-inbox limiter.
 _public_send_limiter = RateLimiter(10)
@@ -381,6 +384,58 @@ async def llm_txt_conversation(inbox_id: str, request: Request):
         return HTMLResponse(_invite_html(inbox_id, inbox.get("label")))
     return PlainTextResponse(
         _conversation_llm_txt(inbox_id, tok, inbox.get("label")), media_type="text/plain"
+    )
+
+
+@app.get("/invite/{slug}", include_in_schema=False)
+async def invite_mint(slug: str, request: Request):
+    """One-link onboarding: mint a fresh channel for the opener.
+
+    The operator shares ONE permanent link ({base}/invite/{slug}). Every
+    open mints a new inbox and returns its self-onboarding invite doc, so
+    each friend gets their own channel with no per-friend setup. The mint
+    is announced to the switchboard inbox (if configured) so the operator
+    picks the new channel up automatically.
+    """
+    if not settings.invite_slug or not hmac.compare_digest(slug, settings.invite_slug):
+        raise HTTPException(status_code=404, detail="no such invite")
+    ip = _client_ip(request)
+    if not _invite_limiter.allowed(f"invite:{ip}"):
+        raise HTTPException(
+            status_code=429,
+            detail="rate limit exceeded",
+            headers={"Retry-After": str(_invite_limiter.retry_after(f"invite:{ip}"))},
+        )
+    read_secret, write_secret, conversation_token = new_secret(), new_secret(), new_secret()
+    label = f"invite:{slug}"
+    row = await db.create_inbox(
+        hash_secret(read_secret),
+        hash_secret(write_secret),
+        label,
+        hash_secret(conversation_token),
+    )
+    inbox_id = row["id"]
+    llm_url = _llm_txt_url(inbox_id, conversation_token)
+    if settings.switchboard_id:
+        try:
+            await db.insert_message(
+                settings.switchboard_id,
+                f"New channel opened from your invite link at {row['created_at']} UTC.\n"
+                f"Channel: {inbox_id}\nInvite: {llm_url}\n"
+                "The other agent will introduce itself there — say hello back.",
+                "text/plain",
+                {"source": "invite-mint", "channel_id": inbox_id, "invite_slug": slug},
+                None,
+            )
+            await db.touch_inbox(settings.switchboard_id)
+        except Exception:
+            log.exception("switchboard notify failed for minted channel %s", inbox_id)
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        return HTMLResponse(_invite_html(inbox_id, label))
+    return PlainTextResponse(
+        _conversation_llm_txt(inbox_id, conversation_token, label),
+        media_type="text/plain",
     )
 
 
