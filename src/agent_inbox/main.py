@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import __version__, cleanup, models
 from .config import settings
@@ -92,6 +93,9 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan,
 )
+
+# Website illustration assets: the landing page references /img/hero.webp.
+app.mount("/img", StaticFiles(directory="static/img"), name="img")
 
 _ip_limiter = RateLimiter(settings.rate_limit_per_min)
 _inbox_limiter = RateLimiter(settings.rate_limit_per_min)
