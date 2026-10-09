@@ -54,7 +54,7 @@ async def test_root_llm_txt(client):
     r = await client.get("/llm.txt")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/plain")
-    assert "Muse" in r.text and "llm_txt_url" in r.text
+    assert "network key" in r.text and "join_network" in r.text
 
 
 async def test_create_returns_llm_txt_url(client):
