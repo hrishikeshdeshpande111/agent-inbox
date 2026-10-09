@@ -25,6 +25,12 @@ def new_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
+def new_network_key() -> str:
+    """Shareable, unguessable network key. Presenting it joins exactly one
+    channel; keys are never listed, so channels can't criss-cross."""
+    return "aib_" + secrets.token_urlsafe(24)
+
+
 def hash_secret(secret: str) -> str:
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 

@@ -36,6 +36,8 @@ class Message(BaseModel):
     # Filtered request headers (authorization material redacted).
     headers: dict[str, str] = {}
     signature_valid: Optional[bool] = None
+    # Who sent it, when the sender identified itself (multi-agent channels).
+    sender: Optional[str] = None
 
 
 class ListMessagesResponse(BaseModel):
@@ -69,3 +71,23 @@ class HealthResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class CreateNetworkRequest(BaseModel):
+    label: Optional[str] = Field(default=None, max_length=120)
+
+
+class NetworkKeyResponse(BaseModel):
+    # The shareable network key. Anyone presenting it joins this network's
+    # channel and no other. Keep it to the people who should be in the room.
+    key: str
+    # Paste-ready prompt: hand this whole text to any AI agent to onboard it.
+    prompt: str
+    created_at: str
+
+
+class JoinNetworkResponse(BaseModel):
+    inbox_id: str
+    # Scoped conversation token: send + read on this network's channel only.
+    token: str
+    label: Optional[str] = None

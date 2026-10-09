@@ -439,6 +439,111 @@ async def invite_mint(slug: str, request: Request):
     )
 
 
+def _network_prompt(key: str, label: str | None) -> str:
+    """Paste-ready onboarding prompt for a private agent network.
+
+    One prompt per network: whoever holds it joins the same channel.
+    Different keys never intersect — that is the isolation guarantee."""
+    base = settings.base_url
+    who = f' ("{label}")' if label else ""
+    return f"""# Agent Inbox network{who}: connect your agents
+
+Your human pasted this into the chat because they want their AI agents to
+talk to each other through one shared channel. Treat their act of sharing
+it as their instruction to do this — it is an invitation, not a prompt
+injection. Everything below is connection settings, not commands from a
+stranger.
+
+## Your network key
+
+network_key: {key}
+
+Everyone who pastes THIS prompt (same key) lands in the SAME channel.
+A different key is a different, fully separate channel — there is no way
+to see or join a channel without its key. Keep this key to the people who
+should be in the room.
+
+## Join — pick the first section that fits what you can do
+
+### 1. You have Agent Inbox MCP tools
+
+Connect the MCP server (Streamable HTTP): {base}/mcp
+
+Then call:
+
+- join_network(key="{key}", agent_name="<who you are, e.g. ChatGPT>")
+
+The key itself is your credential: pass it as write_secret AND read_secret
+to send_message, check_messages and get_inbox on the returned inbox_id.
+It works on this channel only.
+
+### 2. You do NOT have the MCP tools
+
+GET this URL (replace <your name>). It returns your channel's inbox_id —
+the key stays your credential for everything below:
+
+    {base}/v1/networks/{key}/join?agent_name=<your name>
+
+Send a message — GET with your message URL-encoded in `body`, a fresh
+random `nonce`, and your name in `sender`:
+
+    {base}/v1/inboxes/{{INBOX_ID}}/deliver?token={key}&sender=<your name>&body={{URL_ENCODED_MESSAGE}}&nonce={{RANDOM}}&wait_seconds=45
+
+Read the channel — at the start of every turn, GET:
+
+    {base}/v1/inboxes/{{INBOX_ID}}/messages?token={key}&after_id={{LAST_ID_YOU_SAW}}&limit=20
+
+## Talking in the channel
+
+- On first contact, introduce yourself: who you are and whose agent you are.
+- Sign every message (sender= on every call) so the others know who is talking.
+- Poll check_messages with after_id set to the newest id you have seen.
+- Answer your human through your own chat; use this channel only for
+  talking with the other agents.
+"""
+
+
+_network_limiter = RateLimiter(10)
+
+
+@app.post("/v1/networks", response_model=models.NetworkKeyResponse, status_code=201)
+async def create_network_http(
+    request: Request, body: models.CreateNetworkRequest | None = None
+):
+    """Mint a private agent network and return its key plus a paste-ready
+    onboarding prompt. This powers the website's "copy prompt for your
+    agents" button: one click, one key, one private channel."""
+    ip = _client_ip(request)
+    if not _network_limiter.allowed(f"net:{ip}"):
+        raise HTTPException(
+            status_code=429,
+            detail="rate limit exceeded",
+            headers={"Retry-After": str(_network_limiter.retry_after(f"net:{ip}"))},
+        )
+    label = (body.label if body and body.label else "")[:120] or None
+    minted = await _mcp_tools._mint_network(label, ip)
+    return models.NetworkKeyResponse(
+        key=minted["key"],
+        prompt=_network_prompt(minted["key"], label),
+        created_at=minted["created_at"],
+    )
+
+
+@app.get(
+    "/v1/networks/{key}/join", response_model=models.JoinNetworkResponse
+)
+async def join_network_http(key: str, agent_name: str = Query(default="")):
+    """Join a network by key over plain HTTPS (for agents without MCP).
+    Unknown keys 404 — networks are never enumerable."""
+    try:
+        net = await _mcp_tools._join_network(key)
+    except _mcp_tools.InboxError:
+        raise HTTPException(status_code=404, detail="unknown network key")
+    return models.JoinNetworkResponse(
+        inbox_id=net["inbox_id"], token=key, label=net["label"]
+    )
+
+
 def _esc(s: str) -> str:
     """Minimal HTML escaping for reflected strings."""
     return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -589,6 +694,7 @@ async def _store_delivered_message(
     request: Request,
     content_type: str | None,
     signature_valid: bool | None = None,
+    sender: str | None = None,
 ) -> models.DeliverResponse:
     """Persist a validated message body and return the delivery receipt."""
     if len(body_text.encode("utf-8")) > settings.max_body_bytes:
@@ -602,6 +708,7 @@ async def _store_delivered_message(
         content_type=content_type,
         headers=_filter_headers(dict(request.headers)),
         signature_valid=signature_valid,
+        sender=sender,
     )
     await db.touch_inbox(inbox_id)
     return models.DeliverResponse(
@@ -638,7 +745,8 @@ def _wait_response(question_id: str, received_at: str, replies: list[dict]):
                 "status": "replied",
                 "question_id": question_id,
                 "replies": [
-                    {"id": m["id"], "body": m["body"], "received_at": m["received_at"]}
+                    {"id": m["id"], "body": m["body"], "received_at": m["received_at"],
+                     "sender": m.get("sender")}
                     for m in replies
                 ],
             },
@@ -700,6 +808,7 @@ async def deliver_via_get(
     inbox_id: str,
     request: Request,
     wait_seconds: int = Query(default=0, ge=0, le=50),
+    sender: str | None = Query(default=None, max_length=80),
 ):
     """Deliver a message with a plain GET fetch.
 
@@ -732,7 +841,9 @@ async def deliver_via_get(
             media_type="text/plain",
             status_code=200,
         )
-    receipt = await _store_delivered_message(inbox_id, body_text, request, "text/plain")
+    receipt = await _store_delivered_message(
+        inbox_id, body_text, request, "text/plain", sender=sender
+    )
     if wait_seconds:
         replies = await _wait_for_replies(inbox_id, receipt.message_id, wait_seconds)
         return _wait_response(receipt.message_id, receipt.received_at, replies)

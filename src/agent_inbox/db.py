@@ -36,11 +36,26 @@ CREATE TABLE IF NOT EXISTS messages (
     content_type    TEXT,
     body            TEXT NOT NULL,
     headers         TEXT NOT NULL DEFAULT '{}',
-    signature_valid INTEGER
+    signature_valid INTEGER,
+    sender          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_inbox_time
     ON messages(inbox_id, received_at DESC, id DESC);
+
+-- Agent networks: a shareable key that maps to exactly one inbox (channel).
+-- Whoever presents the key joins that channel; different keys never
+-- intersect. This is the isolation primitive for the public product:
+-- Joe's agents share Joe's key/channel, Maya's key is a different channel.
+CREATE TABLE IF NOT EXISTS networks (
+    key         TEXT PRIMARY KEY,
+    inbox_id    TEXT NOT NULL REFERENCES inboxes(id) ON DELETE CASCADE,
+    label       TEXT,
+    created_at  TEXT NOT NULL,
+    created_ip  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_networks_inbox ON networks(inbox_id);
 """
 
 
@@ -65,6 +80,10 @@ class Database:
             await self._conn.execute(
                 "ALTER TABLE inboxes ADD COLUMN conversation_token_hash TEXT"
             )
+        async with self._conn.execute("PRAGMA table_info(messages)") as cur:
+            msg_cols = {row[1] for row in await cur.fetchall()}
+        if "sender" not in msg_cols:
+            await self._conn.execute("ALTER TABLE messages ADD COLUMN sender TEXT")
         await self._conn.commit()
 
     async def close(self) -> None:
@@ -148,6 +167,37 @@ class Database:
             row = await cur.fetchone()
         return {"message_count": row[0] if row else 0}
 
+    # ---- networks -----------------------------------------------------
+
+    async def create_network(
+        self, key: str, inbox_id: str, label: str | None, created_ip: str | None
+    ) -> dict:
+        now = _now()
+        await self.conn.execute(
+            "INSERT INTO networks (key, inbox_id, label, created_at, created_ip)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (key, inbox_id, label, now, created_ip),
+        )
+        await self.conn.commit()
+        return {"key": key, "inbox_id": inbox_id, "label": label, "created_at": now}
+
+    async def get_network(self, key: str) -> dict | None:
+        async with self.conn.execute(
+            "SELECT key, inbox_id, label, created_at, created_ip FROM networks"
+            " WHERE key = ?",
+            (key,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+        return {
+            "key": row[0],
+            "inbox_id": row[1],
+            "label": row[2],
+            "created_at": row[3],
+            "created_ip": row[4],
+        }
+
     # ---- messages -----------------------------------------------------
 
     async def insert_message(
@@ -157,13 +207,14 @@ class Database:
         content_type: str | None,
         headers: dict,
         signature_valid: bool | None,
+        sender: str | None = None,
     ) -> dict:
         message_id = new_id()
         now = _now()
         await self.conn.execute(
             "INSERT INTO messages (id, inbox_id, received_at, content_type, body, headers,"
-            "                       signature_valid)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "                       signature_valid, sender)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 message_id,
                 inbox_id,
@@ -172,6 +223,7 @@ class Database:
                 body,
                 json.dumps(headers),
                 None if signature_valid is None else int(signature_valid),
+                (sender or "")[:80] or None,
             ),
         )
         await self.conn.commit()
@@ -215,7 +267,7 @@ class Database:
                 cursor_clause = "AND (received_at < ? OR (received_at = ? AND id < ?))"
                 params += [anchor[0], anchor[0], anchor[1]]
         query = (
-            "SELECT id, received_at, content_type, body, headers, signature_valid"
+            "SELECT id, received_at, content_type, body, headers, signature_valid, sender"
             " FROM messages WHERE inbox_id = ? " + cursor_clause + " " + order_clause + " LIMIT ?"
         )
         params.append(limit + 1)  # fetch one extra to know if there is a next page
@@ -231,6 +283,7 @@ class Database:
                     "body": r[3],
                     "headers": json.loads(r[4] or "{}"),
                     "signature_valid": None if r[5] is None else bool(r[5]),
+                    "sender": r[6],
                 }
             )
         next_before = rows[limit - 1][0] if len(rows) > limit and not after_id else None

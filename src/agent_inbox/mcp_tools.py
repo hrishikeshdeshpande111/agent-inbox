@@ -27,7 +27,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from .config import settings
 from .db import db
 from .rate_limit import RateLimiter
-from .security import hash_secret, new_secret, secrets_match
+from .security import hash_secret, new_network_key, new_secret, secrets_match
 
 mcp = MCPServer("agent-inbox")
 
@@ -35,6 +35,9 @@ mcp = MCPServer("agent-inbox")
 # MCP calls carry no client IP at the tool layer, so we budget per inbox
 # (and per tool for the unauthenticated create_inbox).
 _mcp_limiter = RateLimiter(settings.rate_limit_per_min)
+# Network minting is unauthenticated: a tighter GLOBAL budget so one client
+# can't flood the service with channels (10 networks/minute, shared).
+_network_mint_limiter = RateLimiter(10)
 
 
 class InboxError(Exception):
@@ -113,6 +116,74 @@ async def _wait_for_replies(
     return []
 
 
+async def _mint_network(label: str | None, created_ip: str | None) -> dict:
+    """Create a fresh channel + network key. Shared by the MCP
+    create_network tool and the REST POST /v1/networks endpoint.
+
+    The network key doubles as the channel's scoped conversation token:
+    we store hash(key) as the inbox's conversation_token_hash, so the key
+    the member already holds is accepted as the send/read credential by
+    the existing auth checks — no extra token to distribute, nothing new
+    to leak. Members never see the master read/write secrets."""
+    if not _network_mint_limiter.allowed("mint"):
+        raise InboxError("network creation rate limit exceeded, try again in a minute")
+    read_secret, write_secret = new_secret(), new_secret()
+    key = new_network_key()
+    row = await db.create_inbox(
+        hash_secret(read_secret),
+        hash_secret(write_secret),
+        f"network:{label}" if label else "network",
+        hash_secret(key),
+    )
+    net = await db.create_network(key, row["id"], label, created_ip)
+    return {
+        "key": key,
+        "inbox_id": row["id"],
+        "label": label,
+        "created_at": net["created_at"],
+    }
+
+
+async def _join_network(key: str) -> dict:
+    """Resolve a network key to its channel. Unknown keys fail closed —
+    there is no way to enumerate networks."""
+    net = await db.get_network(key)
+    if net is None:
+        raise InboxError("unknown network key")
+    await _require_inbox(net["inbox_id"])
+    return {"inbox_id": net["inbox_id"], "label": net["label"]}
+
+
+@mcp.tool()
+async def create_network(label: str = "") -> dict:
+    """Create a private agent network: a shared channel with its own
+    unguessable key. Hand the returned key (or the full prompt from the
+    website's "copy prompt for your agents" button) to each agent that
+    should be in the room — they all call join_network with it and land
+    in the same channel. Different keys are fully isolated: there is no
+    way to see or join a network without its key."""
+    label = (label or "")[:120] or None
+    return await _mint_network(label, None)
+
+
+@mcp.tool()
+async def join_network(key: str, agent_name: str = "") -> dict:
+    """Join a private agent network with its key. Returns the channel's
+    inbox_id; the key itself is your credential — pass it as write_secret
+    / read_secret to send_message, check_messages and get_inbox (it works
+    as both, scoped to this channel only). Pass agent_name (e.g. "ChatGPT")
+    and sign your messages with sender= so the other agents know who is
+    talking."""
+    _check_rate(f"join:{key[:12]}")
+    net = await _join_network(key)
+    return {
+        "inbox_id": net["inbox_id"],
+        "label": net["label"],
+        "agent_name": (agent_name or "")[:80],
+        "credential": "Use the network key as write_secret and read_secret.",
+    }
+
+
 @mcp.tool()
 async def create_inbox(label: str = "") -> dict:
     """Create a new Agent Inbox — a mailbox that any webhook or agent can
@@ -139,7 +210,8 @@ async def create_inbox(label: str = "") -> dict:
 
 @mcp.tool()
 async def send_message(
-    inbox_id: str, write_secret: str, body: str, wait_seconds: int = 0
+    inbox_id: str, write_secret: str, body: str, wait_seconds: int = 0,
+    sender: str = "",
 ) -> dict:
     """Deliver a message to an agent's inbox. The agent on the other side
     reads it with check_messages. The write_secret may be the inbox's
@@ -148,7 +220,8 @@ async def send_message(
     a single "ask and get the answer" turn:
     a reply arrives as {"status": "replied", "replies": [...]}, otherwise
     {"status": "timeout"} and you can check_messages later with after_id
-    set to the returned message_id."""
+    set to the returned message_id. In a shared network channel, pass
+    sender="YourName" so the other agents know who is talking."""
     _check_rate(f"send:{inbox_id}")
     inbox = await _require_inbox(inbox_id)
     _check_send_credential(write_secret, inbox)
@@ -160,6 +233,7 @@ async def send_message(
         content_type="text/plain",
         headers={"source": "mcp"},
         signature_valid=None,
+        sender=sender or None,
     )
     await db.touch_inbox(inbox_id)
     if wait_seconds:
@@ -169,7 +243,8 @@ async def send_message(
                 "status": "replied",
                 "message_id": row["id"],
                 "replies": [
-                    {"id": m["id"], "body": m["body"], "received_at": m["received_at"]}
+                    {"id": m["id"], "body": m["body"], "received_at": m["received_at"],
+                     "sender": m.get("sender")}
                     for m in replies
                 ],
             }
@@ -206,6 +281,7 @@ async def check_messages(
                 "body": m["body"],
                 "received_at": m["received_at"],
                 "content_type": m.get("content_type"),
+                "sender": m.get("sender"),
             }
             for m in messages
         ],

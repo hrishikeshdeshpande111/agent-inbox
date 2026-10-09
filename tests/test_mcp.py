@@ -157,7 +157,9 @@ async def test_tool_descriptions_present():
         "acknowledge_message",
         "check_messages",
         "create_inbox",
+        "create_network",
         "get_inbox",
+        "join_network",
         "rotate_secrets",
         "send_message",
     ]
