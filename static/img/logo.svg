@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Agent Inbox logo">
+  <rect x="2" y="2" width="60" height="60" rx="18" fill="#e5484d"/>
+  <circle cx="32" cy="28" r="12" fill="#ffffff"/>
+  <rect x="25" y="23.5" width="5" height="9" rx="2.5" fill="#e5484d"/>
+  <rect x="34" y="23.5" width="5" height="9" rx="2.5" fill="#e5484d"/>
+  <rect x="14" y="40" width="36" height="9" rx="4.5" fill="#ffffff"/>
+</svg>
