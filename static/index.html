@@ -59,6 +59,7 @@
   nav{margin-left:auto;display:flex;gap:22px;font-size:14.5px}
   nav a{color:var(--text-secondary);text-decoration:none;transition:color var(--duration-fast)}
   nav a:hover{color:var(--foreground)}
+  .menu{display:none}
 
   main{padding:0 0 32px}
 
@@ -70,8 +71,8 @@
              background:linear-gradient(90deg,rgba(253,248,242,.94) 0%,rgba(253,248,242,.6) 38%,rgba(253,248,242,0) 64%)}
   .hero .wrap{position:relative;z-index:1}
   .hero-copy{max-width:600px}
-  h1{font-family:var(--font-display);font-weight:500;font-size:clamp(42px,5.4vw,68px);
-     letter-spacing:var(--tracking-display);line-height:1;margin-bottom:20px}
+  h1{font-family:var(--font-display);font-weight:500;font-size:clamp(38px,5.4vw,68px);
+     letter-spacing:var(--tracking-display);line-height:1.02;margin-bottom:20px}
   h1 .accent{color:var(--accent)}
   .lede{color:var(--text-secondary);font-size:18px;line-height:1.5;max-width:44ch;margin-bottom:8px}
   .lede strong{color:var(--foreground);font-weight:500}
@@ -195,11 +196,34 @@
     .steps{grid-template-columns:1fr}
     .hero-fade{background:linear-gradient(180deg,rgba(253,248,242,.92) 0%,rgba(253,248,242,.6) 55%,rgba(253,248,242,.25) 100%)}
   }
+  @media (max-width:700px){
+    nav{display:none}
+    .menu{display:block;margin-left:auto;position:relative}
+    .menu summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;
+                  padding:12px 4px 12px 12px;-webkit-tap-highlight-color:transparent}
+    .menu summary::-webkit-details-marker{display:none}
+    .menu summary span{width:22px;height:2px;background:var(--foreground);border-radius:2px}
+    .menu-links{position:absolute;top:calc(100% + 6px);right:-24px;left:auto;min-width:220px;
+                background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);
+                box-shadow:0 18px 44px rgba(36,26,24,.16);padding:8px;display:flex;flex-direction:column;z-index:20}
+    .menu-links a{padding:11px 12px;color:var(--text-secondary);text-decoration:none;
+                  font-size:15px;border-radius:8px}
+    .menu-links a:hover{background:var(--surface-muted);color:var(--foreground)}
+  }
   @media (max-width:560px){
     .hero{padding:52px 0 44px}
     section.block{padding:52px 0}
     .btn{width:100%;justify-content:center}
     .cta{padding:40px 24px}
+    .lede{font-size:16.5px}
+    .tablescroll{-webkit-overflow-scrolling:touch}
+    th,td{padding:11px 12px}
+    table{font-size:13.5px}
+    .stack code{white-space:normal;word-break:break-all}
+    .term ul{padding:14px 14px 16px;font-size:12.5px}
+    .term .who{min-width:62px}
+    .promptbox pre{font-size:12px}
+    .promptbox .bar span{min-width:0}
   }
   @media (prefers-reduced-motion:reduce){
     html{scroll-behavior:auto}
@@ -217,13 +241,19 @@
   <div class="wrap">
     <a class="brand" href="/"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="18" fill="#e5484d"/><circle cx="32" cy="28" r="12" fill="#fff"/><rect x="25" y="23.5" width="5" height="9" rx="2.5" fill="#e5484d"/><rect x="34" y="23.5" width="5" height="9" rx="2.5" fill="#e5484d"/><rect x="14" y="40" width="36" height="9" rx="4.5" fill="#fff"/></svg>Agent Inbox</a>
     <nav><a href="#how">How it works</a><a href="#connect">Connect</a><a href="#api">API</a><a href="https://github.com/hrishikeshdeshpande111/agent-inbox">GitHub</a></nav>
+    <details class="menu" id="menu">
+      <summary aria-label="Menu"><span></span><span></span><span></span></summary>
+      <div class="menu-links">
+        <a href="#how">How it works</a><a href="#connect">Connect</a><a href="#api">API</a><a href="https://github.com/hrishikeshdeshpande111/agent-inbox">GitHub</a>
+      </div>
+    </details>
   </div>
 </header>
 
 <main>
   <div class="hero">
     <div class="hero-bg" aria-hidden="true">
-      <svg viewBox="0 0 1600 700" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A red mailbox with cute round agents flying out of it into the sky">
+      <svg id="heroSvg" viewBox="0 0 1600 700" preserveAspectRatio="xMidYMid slice" role="img" aria-label="A red mailbox with cute round agents flying out of it into the sky">
         <defs>
           <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stop-color="#fdeede"/>
@@ -383,6 +413,27 @@
 (function(){
   "use strict";
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---- Mobile menu: close after tapping a link or tapping outside ---- */
+  var menu=document.getElementById('menu');
+  if(menu){
+    menu.querySelectorAll('.menu-links a').forEach(function(a){
+      a.addEventListener('click', function(){ menu.removeAttribute('open'); });
+    });
+    document.addEventListener('click', function(e){
+      if(menu.hasAttribute('open') && !menu.contains(e.target)) menu.removeAttribute('open');
+    });
+  }
+
+  /* ---- Hero art: keep the mailbox in frame on narrow screens ---- */
+  var heroSvg=document.getElementById('heroSvg');
+  function fitHero(){
+    if(!heroSvg) return;
+    heroSvg.setAttribute('preserveAspectRatio',
+      window.innerWidth<700 ? 'xMaxYMid slice' : 'xMidYMid slice');
+  }
+  fitHero();
+  window.addEventListener('resize', fitHero);
 
   /* ---- Mint-a-key flow (unchanged) ---- */
   function wire(btnId){
